@@ -38,6 +38,11 @@ jobs:
     runs-on: windows-latest
     needs: build
     steps:
+    - name: 'Login via Azure CLI'
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_RBAC_CREDENTIALS }}
+    
     - name: Download artifact from build job
       uses: actions/download-artifact@v3
       with:
@@ -47,5 +52,4 @@ jobs:
       uses: Azure/functions-action@v1
       with:
         app-name: ${{ env.AZURE_FUNCTIONAPP_NAME }}
-        publish-profile: ${{ secrets.func_aivideoprocessor_D373 }}
         package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
