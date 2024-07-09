@@ -16,12 +16,19 @@ namespace VideoProcessor
 
         private const string ApiUrl = "https://api.videoindexer.ai";
 
+        private readonly ILogger<VideoProcessorFunction> _logger;
+
         // Connection string to the storage account
         private static string StorageAccountConnectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
 
         private static string ContainerName = Environment.GetEnvironmentVariable("ContainerName");
 
         private static string FunctionCallbackUrl = Environment.GetEnvironmentVariable("FunctionCallbackUrl");
+
+        public VideoProcessorFunction(ILogger<VideoProcessorFunction> logger)
+        {
+            _logger = logger;
+        }
 
         /// <summary>
         /// This is the callback URL that Video Indexer posts to where we can get the Video ID. We use this in order to avoid having
@@ -30,28 +37,28 @@ namespace VideoProcessor
         /// <param name="req">POST request from Video Indexer</param>
         /// <param name="log">Logger</param>
         [Function("GetVideoStatus")]
-        public static async Task ReceiveVideoIndexerStateUpdate([HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req, ILogger log)
+        public async Task ReceiveVideoIndexerStateUpdate([HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
         {
-            log.LogInformation($"Received Video Indexer status update - Video ID: {req.Query["id"]} \t Processing State: {req.Query["state"]}");
+            _logger.LogInformation($"Received Video Indexer status update - Video ID: {req.Query["id"]} \t Processing State: {req.Query["state"]}");
 
             // If video is processed
             if (req.Query["state"].Equals(ProcessingState.Processed.ToString()))
             {
-                await GetVideoCaptions(req.Query["id"], log);
+                await GetVideoCaptions(req.Query["id"]);
             }
             else if (req.Query["state"].Equals(ProcessingState.Failed.ToString()))
             {
-                log.LogInformation($"\nThe video index failed for video ID {req.Query["id"]}.");
+                _logger.LogInformation($"\nThe video index failed for video ID {req.Query["id"]}.");
             }
         }
 
 
         [Function("VideoUploadTrigger")]
-        public static async Task Run([BlobTrigger("videos/{name}", Connection = "AzureWebJobsStorage")] Stream videoBlob, string name, Uri uri, ILogger log, BlobProperties properties)
+        public async Task Run([BlobTrigger("videos/{name}", Connection = "AzureWebJobsStorage")] Stream videoBlob, string name, Uri uri, BlobProperties properties)
         {
-            log.LogInformation("C# HTTP trigger function processed a request.");
+            _logger.LogInformation("C# HTTP trigger function processed a request.");
 
-            await ProcessBlobTrigger(name, log);
+            await ProcessBlobTrigger(name);
         }
 
         /// <summary>
@@ -60,7 +67,7 @@ namespace VideoProcessor
         /// <param name="name">The name of the video / blob</param>
         /// <param name="log"></param>
         /// <returns></returns>
-        private static async Task ProcessBlobTrigger(string name, ILogger log)
+        private async Task ProcessBlobTrigger(string name)
         {
             BlobClient blobClient = new BlobClient(StorageAccountConnectionString, ContainerName, name);
 
@@ -76,7 +83,7 @@ namespace VideoProcessor
 
             Uri uri = blobClient.GenerateSasUri(sasBuilder);
 
-            log.LogInformation($"SAS URI for blob is {uri}");
+            _logger.LogInformation($"SAS URI for blob is {uri}");
 
             // Create the http client
             var handler = new HttpClientHandler
@@ -90,15 +97,15 @@ namespace VideoProcessor
             var videoIndexerResourceProviderClient = await VideoIndexerResourceProviderClient.BuildVideoIndexerResourceProviderClient();
 
             // Get account details
-            var account = await videoIndexerResourceProviderClient.GetAccount(log);
+            var account = await videoIndexerResourceProviderClient.GetAccount(_logger);
             var accountLocation = account.Location;
             var accountId = account.Properties.Id;
 
             // Get account level access token for Azure Video Indexer 
-            var accountAccessToken = await videoIndexerResourceProviderClient.GetAccessToken(ArmAccessTokenPermission.Contributor, ArmAccessTokenScope.Account, log);
+            var accountAccessToken = await videoIndexerResourceProviderClient.GetAccessToken(ArmAccessTokenPermission.Contributor, ArmAccessTokenScope.Account, _logger);
 
             // Upload the video
-            await UploadVideo(name, uri, accountLocation, accountId, accountAccessToken, client, log);
+            await UploadVideo(name, uri, accountLocation, accountId, accountAccessToken, client);
         }
 
         /// <summary>
@@ -112,9 +119,9 @@ namespace VideoProcessor
         /// <param name="client"></param>
         /// <param name="log"></param>
         /// <returns></returns>
-        private static async Task UploadVideo(string videoName, Uri videoUri, string accountLocation, string accountId, string accountAccessToken, HttpClient client, ILogger log)
+        private async Task UploadVideo(string videoName, Uri videoUri, string accountLocation, string accountId, string accountAccessToken, HttpClient client)
         {
-            log.LogInformation($"Video is starting to upload with video name: {videoName}, videoUri: {videoUri}");
+            _logger.LogInformation($"Video is starting to upload with video name: {videoName}, videoUri: {videoUri}");
 
             var content = new MultipartFormDataContent();
 
@@ -132,7 +139,7 @@ namespace VideoProcessor
                         {"callbackUrl", FunctionCallbackUrl },
                     });
 
-                log.LogInformation($"API Call: {ApiUrl}/{accountLocation}/Accounts/{accountId}/Videos?{queryParams}");
+                _logger.LogInformation($"API Call: {ApiUrl}/{accountLocation}/Accounts/{accountId}/Videos?{queryParams}");
 
                 var uploadRequestResult = await client.PostAsync($"{ApiUrl}/{accountLocation}/Accounts/{accountId}/Videos?{queryParams}", content);
 
@@ -142,11 +149,11 @@ namespace VideoProcessor
 
                 // Get the video ID from the upload result
                 var videoId = System.Text.Json.JsonSerializer.Deserialize<Video>(uploadResult).Id;
-                log.LogInformation($"\nVideo ID {videoId} was uploaded successfully");
+                _logger.LogInformation($"\nVideo ID {videoId} was uploaded successfully");
             }
             catch (Exception ex)
             {
-                log.LogInformation(ex.ToString());
+                _logger.LogInformation(ex.ToString());
                 throw;
             }
         }
@@ -162,7 +169,7 @@ namespace VideoProcessor
             return queryParameters.ToString();
         }
 
-        public static void VerifyStatus(HttpResponseMessage response, System.Net.HttpStatusCode expectedStatusCode)
+        public void VerifyStatus(HttpResponseMessage response, System.Net.HttpStatusCode expectedStatusCode)
         {
             if (response.StatusCode != expectedStatusCode)
             {
@@ -177,19 +184,19 @@ namespace VideoProcessor
         /// <param name="videoId"></param>
         /// <param name="log"></param>
         /// <returns></returns>
-        private static async Task GetVideoCaptions(string videoId, ILogger log)
+        private async Task GetVideoCaptions(string videoId)
         {
             // we don't have the video name and will need to get it from Video Indexer, so let's do that first
             // Build Azure Video Indexer resource provider client that has access token throuhg ARM
             var videoIndexerResourceProviderClient = await VideoIndexerResourceProviderClient.BuildVideoIndexerResourceProviderClient();
 
             // Get account details
-            var account = await videoIndexerResourceProviderClient.GetAccount(log);
+            var account = await videoIndexerResourceProviderClient.GetAccount(_logger);
             var accountLocation = account.Location;
             var accountId = account.Properties.Id;
 
             // Get account level access token for Azure Video Indexer 
-            var accountAccessToken = await videoIndexerResourceProviderClient.GetAccessToken(ArmAccessTokenPermission.Contributor, ArmAccessTokenScope.Account, log);
+            var accountAccessToken = await videoIndexerResourceProviderClient.GetAccessToken(ArmAccessTokenPermission.Contributor, ArmAccessTokenScope.Account, _logger);
 
             string queryParams = CreateQueryString(
                 new Dictionary<string, string>()
@@ -214,7 +221,7 @@ namespace VideoProcessor
 
             var videoCaptionsResult = await videoCaptionsRequestResult.Content.ReadAsStringAsync();
 
-            log.LogInformation($"Captions of the video for video ID {videoId}: \n{videoCaptionsRequestResult}");
+            _logger.LogInformation($"Captions of the video for video ID {videoId}: \n{videoCaptionsRequestResult}");
         }
     }
 
