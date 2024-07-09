@@ -1,16 +1,15 @@
-using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Models;
-using Azure.Storage.Sas;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.Azure.Functions.Worker;
-using Microsoft.Azure.WebJobs;
-using Microsoft.Extensions.Logging;
-using System.Text.Json.Serialization;
-using System.Web;
-
 namespace VideoProcessor
 {
+    using Azure.Storage.Blobs;
+    using Azure.Storage.Blobs.Models;
+    using Azure.Storage.Sas;
+    using Microsoft.AspNetCore.Http;
+    using Microsoft.Azure.Functions.Worker;
+    //using Microsoft.Azure.WebJobs;
+    using Microsoft.Extensions.Logging;
+    using System.Text.Json.Serialization;
+    using System.Web;
+
     public class VideoProcessorFunction
     {
         private const string AzureResourceManager = "https://management.azure.com";
@@ -30,7 +29,7 @@ namespace VideoProcessor
         /// </summary>
         /// <param name="req">POST request from Video Indexer</param>
         /// <param name="log">Logger</param>
-        [FunctionName("GetVideoStatus")]
+        [Function("GetVideoStatus")]
         public static async Task ReceiveVideoIndexerStateUpdate([HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req, ILogger log)
         {
             log.LogInformation($"Received Video Indexer status update - Video ID: {req.Query["id"]} \t Processing State: {req.Query["state"]}");
@@ -47,7 +46,7 @@ namespace VideoProcessor
         }
 
 
-        [FunctionName("VideoUploadTrigger")]
+        [Function("VideoUploadTrigger")]
         public static async Task Run([BlobTrigger("videos/{name}", Connection = "AzureWebJobsStorage")] Stream videoBlob, string name, Uri uri, ILogger log, BlobProperties properties)
         {
             log.LogInformation("C# HTTP trigger function processed a request.");
